@@ -2,7 +2,8 @@
 A simple app launcher for Unix written in C
 
 ## status
->[!Info] work in progress
+>[!WARNING]
+>work in progress
 
 ## features
 - own terminal screen handler (no ncurses)
