@@ -129,18 +129,15 @@ void basicFrame() {
   ui_change = 1;
 }
 
-void getGUIApps(char *d, char *n) {
+int getGUIApps(char *d, char *n, char *appName, char *execCmd) {
   char path[512]; // string to store the path of .desktop file
   snprintf(path, sizeof(path), "%s/%s", d, n); // append filename to global path
   FILE *f = fopen(path, "r");                  // read file in path
   if (!f)
-    return;         // error handling if file not readable
+    return 0;       // error handling if file not readable
   char line[512];   // string for each line of the file
   int in_entry = 0; // bool to check if under [Desktop Entry]
-  char nval[256];   // string to store name value
-  char exec[256];   // string to store execution command of .desktop file
-  int isTerm = 1;   // bool to log if app uses terminal
-
+  int isTerm = 1;
   // reads each line of file
   while (fgets(line, sizeof(line), f)) {
     // checks if in right sub sector and logs it in in_entry
@@ -158,27 +155,43 @@ void getGUIApps(char *d, char *n) {
     // vars
     if (sscanf(line, "%19[^=]=%255[^\n]", key, value) == 2) {
       if (strcmp(key, "Name") == 0)
-        strcpy(nval, value);
+        strcpy(appName, value);
       if (strcmp(key, "Terminal") == 0)
         if (!(strcmp(value, "true") == 0))
           isTerm = 0;
-      if (strcmp(key, "Exec"))
-        strcpy(exec, value);
+      if (strcmp(key, "Exec") == 0)
+        strcpy(execCmd, value);
     }
   }
   fclose(f);
+  return !isTerm;
 }
 
-void search() {
+void writeToFile(char *appName, char *execCmd, char *dataPath, char *fileName) {
+  char filePath[512];
+  snprintf(filePath, sizeof(filePath), "%s/%s", dataPath, fileName);
+  FILE *f = fopen(filePath, "a");
+  if (!f)
+    return;
+
+  fprintf(f, "%s|%s\n", appName, execCmd);
+
+  fclose(f);
+}
+
+void search(char *dataPath) {
   char *path = "/usr/share/applications/";
   DIR *dir;
   struct dirent *ent;
 
+  char appName[256]; // string to store name value
+  char execCmd[256]; // string to store execution command of .desktop file
   char *token = strtok(path, ":");
   while (token != 0) {
     if ((dir = opendir(token)) != NULL) {
       while ((ent = readdir(dir)) != NULL) {
-        getGUIApps(token, ent->d_name);
+        if (getGUIApps(token, ent->d_name, appName, execCmd))
+          writeToFile(appName, execCmd, dataPath, "app.dat");
       }
     }
     token = strtok(NULL, ":");
@@ -205,7 +218,7 @@ void onStartUp() {
   // creating path
   mkdir(dataPath, 0755);
 
-  search();
+  search(dataPath);
 }
 
 void app() {
@@ -232,4 +245,5 @@ void app() {
     }
   }
 }
+
 int main() { app(); }
