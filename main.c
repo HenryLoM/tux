@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -24,7 +25,6 @@
 static struct termios orig;
 
 // State vars
-int selected = 0;
 int ui_change = 1;
 
 // size vars
@@ -38,7 +38,7 @@ int termCols = 0;
  */
 
 void actAltScr() {
-  printf("\x1b[?1049h");
+  printf("\x1b[?1049h"); // activate alternate screen
   printf("\x1b[2J");
   printf("\x1b[H");
   fflush(stdout);
@@ -80,18 +80,16 @@ void uiPrint(char *str, ...) {
   va_end(ap);
 }
 
-// get window height
-int getTermRows() {
+// get window size
+int getTermSize(int *rows, int *cols) {
   struct winsize ws;
-  ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws);
-  return ws.ws_row;
-}
-
-// get window width
-int getTermCols() {
-  struct winsize ws;
-  ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws);
-  return ws.ws_col; // return window width
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1)
+    return 0;
+  if (rows)
+    *rows = ws.ws_row;
+  if (cols)
+    *cols = ws.ws_col;
+  return 1;
 }
 
 /*
@@ -101,8 +99,9 @@ int getTermCols() {
  */
 
 int sizeChanged() {
-  int cols = getTermCols();
-  int rows = getTermRows();
+  int cols, rows;
+  if (!getTermSize(&rows, &cols))
+    return 0;
   if (termCols == cols && termRows == rows)
     return 0;
   termCols = cols;
@@ -190,12 +189,21 @@ void onStartUp() {
   actRaw();
   actAltScr();
 
-  termRows = getTermRows();
-  termCols = getTermCols();
+  // Getting home and data path
+  char *homePath = getenv("HOME");
+  char dataPath[512];
+  snprintf(dataPath, sizeof(dataPath), "%s/.local/share/tui-launcher/",
+           homePath);
+
+  getTermSize(&termRows, &termCols);
+
   basicFrame();
   // deactivate blocking behavior of read()
   int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
   fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+  // creating path
+  mkdir(dataPath, 0755);
 
   search();
 }
