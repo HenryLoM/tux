@@ -130,8 +130,48 @@ void basicFrame() {
   ui_change = 1;
 }
 
+void getGUIApps(char *d, char *n) {
+  char path[512]; // string to store the path of .desktop file
+  snprintf(path, sizeof(path), "%s/%s", d, n); // append filename to global path
+  FILE *f = fopen(path, "r");                  // read file in path
+  if (!f)
+    return;         // error handling if file not readable
+  char line[512];   // string for each line of the file
+  int in_entry = 0; // bool to check if under [Desktop Entry]
+  char nval[256];   // string to store name value
+  char exec[256];   // string to store execution command of .desktop file
+  int isTerm = 1;   // bool to log if app uses terminal
+
+  // reads each line of file
+  while (fgets(line, sizeof(line), f)) {
+    // checks if in right sub sector and logs it in in_entry
+    if (line[0] == '[') {
+      in_entry = strstr(line, "Desktop Entry") != NULL;
+      continue;
+    }
+    // skips rest of code if not in correct sub sector
+    if (!in_entry)
+      continue;
+
+    char key[20];    // string to store key
+    char value[256]; // string to store value
+    // for each line -> gets key and value and stores name and exec values in
+    // vars
+    if (sscanf(line, "%19[^=]=%255[^\n]", key, value) == 2) {
+      if (strcmp(key, "Name") == 0)
+        strcpy(nval, value);
+      if (strcmp(key, "Terminal") == 0)
+        if (!(strcmp(value, "true") == 0))
+          isTerm = 0;
+      if (strcmp(key, "Exec"))
+        strcpy(exec, value);
+    }
+  }
+  fclose(f);
+}
+
 void search() {
-  char *path = getenv("PATH");
+  char *path = "/usr/share/applications/";
   DIR *dir;
   struct dirent *ent;
 
@@ -139,7 +179,7 @@ void search() {
   while (token != 0) {
     if ((dir = opendir(token)) != NULL) {
       while ((ent = readdir(dir)) != NULL) {
-        printf("%s ", ent->d_name);
+        getGUIApps(token, ent->d_name);
       }
     }
     token = strtok(NULL, ":");
