@@ -233,6 +233,11 @@ void onStartUp() {
 
 int keyProcessing(int key, char query[], int *queryLen) {
   if (key == 27) { // ESC
+    if (*queryLen > 0) {
+      for (; *queryLen >= 0; (*queryLen)--)
+        query[*queryLen] = '\0';
+      return 1;
+    }
     deactAltScr();
     deactRaw();
 
@@ -274,6 +279,8 @@ void app() {
       } else {
         printf("\x1b[%d;%dH\x1b[2K│ %s", termRows - 1, 1, query);
       }
+      printf("\x1b[%d;%dH│", termRows - 1, termCols);
+      printf("\x1b[%d;%dH", termRows - 1, queryLen > 0 ? queryLen + 2 : 3);
       ui_change = 1;
     }
 
