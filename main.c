@@ -258,6 +258,25 @@ int keyProcessing(int key, char query[], int *queryLen) {
   return 1;
 }
 
+void printQuery(char *query, char *altquery, int queryLen) {
+  if (strcmp(query, altquery) != 0) {
+    strcpy(altquery, query);
+    if (query[0] == 0) {
+      printf("\x1b[%d;%dH\x1b[2K│ search...", termRows - 1, 1);
+    } else {
+
+      printf("\x1b[%d;%dH\x1b[2K│ %.*s", termRows - 1, 1, termCols - 4,
+             queryLen > termCols - 5 ? query + queryLen - termCols + 4 : query);
+    }
+    printf("\x1b[%d;%dH│", termRows - 1, termCols);
+    printf("\x1b[%d;%dH", termRows - 1,
+           queryLen > termCols - 4 ? termCols - 1 : queryLen + 3);
+
+    ui_change = 1;
+    search();
+  }
+}
+
 void app() {
   onStartUp();
 
@@ -272,21 +291,7 @@ void app() {
       break;
     }
 
-    if (strcmp(query, altquery) != 0) {
-      strcpy(altquery, query);
-      if (query[0] == 0) {
-        printf("\x1b[%d;%dH\x1b[2K│ search...", termRows - 1, 1);
-      } else {
-
-        printf("\x1b[%d;%dH\x1b[2K│ %.*s", termRows - 1, 1, termCols - 3,
-               queryLen > termCols - 3 ? query + queryLen - termCols + 3
-                                       : query);
-      }
-      printf("\x1b[%d;%dH│", termRows - 1, termCols);
-      printf("\x1b[%d;%dH", termRows - 1, queryLen + 3);
-      ui_change = 1;
-      search();
-    }
+    printQuery(query, altquery, queryLen);
 
     if (sizeChanged()) {
       basicFrame();
