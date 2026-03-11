@@ -34,6 +34,20 @@ int termCols = 0;
 
 /*
  *
+ * custom structs
+ *
+ */
+
+/*
+struct app {
+  char *name;
+  char *execCmd;
+};
+typedef struct app App;
+*/
+
+/*
+ *
  * system functions
  *
  */
