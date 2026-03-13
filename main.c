@@ -52,20 +52,18 @@ typedef struct {
   int score;
 } Match;
 
+enum { KEY_UP = 1000, KEY_DOWN, KEY_RIGHT, KEY_LEFT };
+
 /*
  *
  * system functions
  *
  */
 
-void actAltScr() {
-  printf("\x1b[?1049h"); // activate alternate screen
-  printf("\x1b[2J");
-  printf("\x1b[H");
-  fflush(stdout);
-}
+// sents ESC-sequences to stdout to activate alternative screen
+void actAltScr() { write(STDOUT_FILENO, "\x1b[?1049h\x1b[2J\x1b[H", 14); }
 
-void deactAltScr() { printf("\x1b[?1049l"); }
+void deactAltScr() { write(STDOUT_FILENO, "\x1b[?1049l", 8); }
 
 void deactRaw() { tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig); }
 
@@ -106,7 +104,34 @@ int getTermSize(int *rows, int *cols) {
 
 int readKey() {
   char c;
-  read(0, &c, 1);
+
+  if (read(0, &c, 1) != 1)
+    return -1;
+
+  if (c == '\x1b') {
+    char seq[2];
+
+    if (read(0, &seq[0], 1) != 1)
+      return '\x1b';
+    if (read(0, &seq[1], 1) != 1)
+      return '\x1b';
+
+    if (seq[0] == '[') {
+      switch (seq[1]) {
+      case 'A':
+        return KEY_UP;
+      case 'B':
+        return KEY_DOWN;
+      case 'C':
+        return KEY_RIGHT;
+      case 'D':
+        return KEY_LEFT;
+      }
+    }
+
+    return '\x1b';
+  }
+
   return c;
 }
 
@@ -301,7 +326,24 @@ FILE *openDataFile(char *dataPath, char *fileName, char *option) {
   return fopen(path, option);
 }
 
+void stripDesktopCodes(char *s) {
+  char *src = s, *dst = s;
+
+  while (*src) {
+    if (src[0] == '%' && src[1] != '\0') {
+      if (src[1] == '%') {
+        *dst++ = '%';
+      }
+      src += 2;
+      continue;
+    }
+    *dst++ = *src++;
+  }
+  *dst = '\0';
+}
+
 void writeToFile(FILE *appFile, FILE *execFile, char *appName, char *execCmd) {
+  stripDesktopCodes(execCmd);
   fprintf(appFile, "%s\n", appName);
   fprintf(execFile, "%s\n", execCmd);
 }
@@ -381,25 +423,48 @@ void freeStorage(AppList appList) {
   free(appList->execSrc);
 }
 
-void search(char *query, AppList appList, int appAmount, char *path) {
+Match *search(Match *top, char *query, AppList appList, int appAmount,
+              char *path, int *top_n) {
+  int top_n2 = termRows - 3;
   clearResUi();
-  int top_n = appAmount > termRows - 3 ? termRows - 3 : appAmount;
-  Match *top = calloc(top_n, sizeof(Match));
   if (!top)
-    return;
+    return 0;
 
   for (int i = 0; i < appAmount; i++) {
+    top[i].name = NULL;
+    top[i].exec = NULL;
+    top[i].score = 0;
     int score = fuzzyScore(query, *(appList->nameList + i), path);
-    tryInsertTop(top, top_n, *(appList->nameList + i),
+    tryInsertTop(top, *top_n, *(appList->nameList + i),
                  *(appList->execCmdList + i), score);
   }
 
-  sortTop(top, top_n);
+  sortTop(top, *top_n);
 
+  return top;
+}
+
+void printResults(Match *top, int top_n) {
   for (int i = 0; i < top_n; i++) {
     if (top[i].score > 0) {
       printf("\x1b[%d;0H %s", termRows - 3 - i, top[i].name);
     }
+  }
+}
+
+void launchApp(Match *top, int selected) {
+  pid_t pid = fork();
+  if (pid == 0) {
+    deactAltScr();
+    deactRaw();
+
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, STDOUT_FILENO);
+    dup2(devnull, STDERR_FILENO);
+    close(devnull);
+
+    execl("/bin/sh", "sh", "-c", top[selected].exec, NULL);
+    _exit(1);
   }
 }
 
@@ -427,22 +492,29 @@ void onStartUp(int *appAmount, AppList appList) {
   writeAppList(dataPath, appList, appAmount);
 }
 
-int keyProcessing(int key, char query[], int *queryLen) {
+void highlightSelected(int selected, Match *top) {
+  printf("\x1b[48;2;180;180;180m\x1b[%d;2H%s\x1b[0m", termRows - 3 - selected,
+         top[selected].score == 0 ? "no result" : top[selected].name);
+}
+
+int keyProcessing(int key, char query[], int *queryLen, int *selected,
+                  Match *top) {
   if (key == 27) { // ESC
     if (*queryLen > 0) {
       for (; *queryLen >= 0; (*queryLen)--)
         query[*queryLen] = '\0';
       return 1;
     }
-    deactAltScr();
-    deactRaw();
-
     return 0;
   } else if (key == 127 || key == 8) { // backspace
     if (*queryLen > 0)
       query[--*queryLen] = '\0';
   } else if (key == '\r' || key == '\n') {
-    // TODO: exec app
+    launchApp(top, *selected);
+    return 0;
+    system(top[0].exec);
+  } else if (key == KEY_UP) {
+    *selected = *selected < termRows - 3 ? (*selected)++ : 0;
   } else if (isprint(key)) {
     if (*queryLen < 512) {
       *queryLen += 1;
@@ -483,21 +555,39 @@ void app() {
   char altquery[512] = {0};
   int queryLen = 0;
   int appAmount = 0;
+  int selected = 0;
+  int oldselc = 0;
   struct applist appList;
 
   onStartUp(&appAmount, &appList);
+  int top_n = appAmount > termRows ? termRows : appAmount;
+
+  Match *top = calloc(termRows, sizeof(Match));
+  search(top, query, &appList, appAmount, path, &top_n);
+  printResults(top, top_n);
+  highlightSelected(selected, top);
 
   for (;;) {
     int key = readKey();
 
-    if (!keyProcessing(key, query, &queryLen)) {
+    if (!keyProcessing(key, query, &queryLen, &selected, top)) {
       freeStorage(&appList);
+      deactAltScr();
+      deactRaw();
       break;
+    }
+
+    if (selected != oldselc) {
+      oldselc = selected;
+      printResults(top, top_n);
+      highlightSelected(selected, top);
     }
 
     if (queryChanged(query, altquery, queryLen)) {
       printQuery(query, queryLen);
-      search(query, &appList, appAmount, path);
+      top = search(top, query, &appList, appAmount, path, &top_n);
+      printResults(top, top_n);
+      highlightSelected(selected, top);
     }
 
     if (sizeChanged()) {
@@ -509,6 +599,8 @@ void app() {
       fflush(stdout);
       ui_change = 0;
     }
+
+    usleep(1000);
   }
 }
 
