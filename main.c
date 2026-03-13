@@ -456,17 +456,25 @@ void printResults(Match *top, int top_n) {
 
 void launchApp(Match *top, int selected) {
   pid_t pid = fork();
+  if (pid < 0)
+    return;
+
   if (pid == 0) {
     deactAltScr();
     deactRaw();
 
+    if (setsid() < 0)
+      _exit(127);
+
     int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, STDIN_FILENO);
     dup2(devnull, STDOUT_FILENO);
     dup2(devnull, STDERR_FILENO);
-    close(devnull);
+    if (devnull > 2)
+      close(devnull);
 
     execl("/bin/sh", "sh", "-c", top[selected].exec, NULL);
-    _exit(1);
+    _exit(127);
   }
 }
 
