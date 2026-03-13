@@ -38,13 +38,19 @@ int termCols = 0;
  *
  */
 
-/*
-struct app {
-  char *name;
-  char *execCmd;
+struct applist {
+  char **nameList;
+  char *nameSrc;
+  char **execCmdList;
+  char *execSrc;
 };
-typedef struct app App;
-*/
+typedef struct applist *AppList;
+
+typedef struct {
+  char *name;
+  char *exec;
+  int score;
+} Match;
 
 /*
  *
@@ -177,6 +183,16 @@ int fuzzyScore(const char *query, const char *name, const char *path) {
   return score;
 }
 
+long getFileSize(char *dirPath, char *appName) {
+  char path[512]; // string to store the path of .desktop file
+  snprintf(path, sizeof(path), "%s/%s", dirPath, appName);
+  struct stat st;
+  if (stat(path, &st) == 0) {
+    return st.st_size;
+  }
+  return 0;
+}
+
 /*
  *
  * ui components
@@ -202,8 +218,43 @@ void basicFrame() {
   clearResUi();
   ui_change = 1;
 }
+int already_in_top(Match *top, size_t top_n, char *name) {
+  for (size_t i = 0; i < top_n; i++) {
+    if (top[i].name == name)
+      return 1;
+  }
+  return 0;
+}
 
-void fuzzySearch(char *query, char *apps) {}
+void tryInsertTop(Match *top, size_t top_n, char *name, char *exec, int score) {
+  if (score <= 0 || top_n == 0)
+    return;
+  if (already_in_top(top, top_n, name))
+    return;
+
+  size_t worst = 0;
+  for (size_t i = 1; i < top_n; i++) {
+    if (top[i].score < top[worst].score)
+      worst = i;
+  }
+
+  if (score > top[worst].score) {
+    top[worst].name = name;
+    top[worst].exec = exec;
+    top[worst].score = score;
+  }
+}
+void sortTop(Match *top, int top_n) {
+  for (int i = 0; i < top_n; i++) {
+    for (int j = i + 1; j < top_n; j++) {
+      if (top[j].score > top[i].score) {
+        Match tmp = top[i];
+        top[i] = top[j];
+        top[j] = tmp;
+      }
+    }
+  }
+}
 
 int getGUIApps(char *d, char *n, char *appName, char *execCmd) {
   char path[512]; // string to store the path of .desktop file
@@ -243,41 +294,116 @@ int getGUIApps(char *d, char *n, char *appName, char *execCmd) {
   return !isTerm;
 }
 
-FILE *openDataFile(char *dataPath, char *fileName) {
+FILE *openDataFile(char *dataPath, char *fileName, char *option) {
   char path[512];
   snprintf(path, sizeof(path), "%s/%s", dataPath, fileName);
 
-  return fopen(path, "w");
+  return fopen(path, option);
 }
 
-void writeToFile(FILE *file, char *appName, char *execCmd) {
-  fprintf(file, "%s|%s\n", appName, execCmd);
+void writeToFile(FILE *appFile, FILE *execFile, char *appName, char *execCmd) {
+  fprintf(appFile, "%s\n", appName);
+  fprintf(execFile, "%s\n", execCmd);
 }
 
-void writeAppDataFile(char *dataPath) {
+// function that scans through applications path and finds all apps that have a
+// gui. returns amount of apps
+int writeAppDataFile(char *dataPath) {
   char *path = "/usr/share/applications/";
   DIR *dir;
   struct dirent *ent;
+  int amount = 0;
 
   char appName[256]; // string to store name value
   char execCmd[256]; // string to store execution command of .desktop file
   char *token = strtok(path, ":");
-  FILE *file = openDataFile(dataPath, "app.dat");
+  FILE *appFile = openDataFile(dataPath, "app.dat", "w");
+  FILE *execFile = openDataFile(dataPath, "exec.dat", "w");
   while (token != 0) {
     if ((dir = opendir(token)) != NULL) {
       while ((ent = readdir(dir)) != NULL) {
-        if (getGUIApps(token, ent->d_name, appName, execCmd))
-          writeToFile(file, appName, execCmd);
+        if (getGUIApps(token, ent->d_name, appName, execCmd)) {
+          writeToFile(appFile, execFile, appName, execCmd);
+          amount++;
+        }
       }
     }
     token = strtok(NULL, ":");
   }
-  fclose(file);
+  fclose(appFile);
+  fclose(execFile);
+  return amount;
 }
 
-void search(char *query) {}
+void writeAppList(char *dataPath, AppList appList, int *appAmount) {
 
-void onStartUp() {
+  FILE *appFile = openDataFile(dataPath, "app.dat", "r");
+  long appFileSize = getFileSize(dataPath, "app.dat");
+  FILE *execFile = openDataFile(dataPath, "exec.dat", "r");
+  long execFileSize = getFileSize(dataPath, "exec.dat");
+
+  char *appLine = NULL;
+  size_t appSize = 0;
+  char *execLine = NULL;
+  size_t execSize = 0;
+
+  char *names = malloc(sizeof(char) * (appFileSize + 1));
+  char **nameList = malloc(sizeof(char *) * *appAmount);
+  char *execs = malloc(sizeof(char) * (execFileSize + 1));
+  char **execList = malloc(sizeof(char *) * *appAmount);
+  if (!nameList || !execList)
+    return;
+
+  appList->nameList = nameList;
+  appList->nameSrc = names;
+  appList->execCmdList = execList;
+  appList->execSrc = execs;
+
+  char *a = names;
+  char *e = execs;
+
+  for (int i = 0; getline(&appLine, &appSize, appFile) != -1 &&
+                  getline(&execLine, &execSize, execFile) != -1;
+       i++) {
+    nameList[i] = a;
+    execList[i] = e;
+    a += sprintf(a, "%s", appLine);
+    *(a - 1) = '\0';
+    e += sprintf(e, "%s", execLine);
+    *(e - 1) = '\0';
+  }
+}
+
+void freeStorage(AppList appList) {
+  free(appList->nameList);
+  free(appList->nameSrc);
+  free(appList->execCmdList);
+  free(appList->execSrc);
+}
+
+void search(char *query, AppList appList, int appAmount, char *path) {
+  clearResUi();
+  int top_n = appAmount > termRows - 3 ? termRows - 3 : appAmount;
+  Match *top = calloc(top_n, sizeof(Match));
+  if (!top)
+    return;
+
+  for (int i = 0; i < appAmount; i++) {
+    int score = fuzzyScore(query, *(appList->nameList + i), path);
+    tryInsertTop(top, top_n, *(appList->nameList + i),
+                 *(appList->execCmdList + i), score);
+  }
+
+  sortTop(top, top_n);
+
+  for (int i = 0; i < top_n; i++) {
+    if (top[i].score > 0) {
+      printf("\x1b[%d;0H %s", termRows - 3 - i, top[i].name);
+    }
+  }
+}
+
+void onStartUp(int *appAmount, AppList appList) {
   actRaw();
   actAltScr();
 
@@ -297,7 +423,8 @@ void onStartUp() {
   // creating path
   mkdir(dataPath, 0755);
 
-  writeAppDataFile(dataPath);
+  *appAmount = writeAppDataFile(dataPath);
+  writeAppList(dataPath, appList, appAmount);
 }
 
 int keyProcessing(int key, char query[], int *queryLen) {
@@ -351,22 +478,26 @@ void printQuery(char *query, int queryLen) {
 }
 
 void app() {
-  onStartUp();
-
+  char *path = "/usr/share/applications/";
   char query[512] = {0};
   char altquery[512] = {0};
   int queryLen = 0;
+  int appAmount = 0;
+  struct applist appList;
+
+  onStartUp(&appAmount, &appList);
 
   for (;;) {
     int key = readKey();
 
     if (!keyProcessing(key, query, &queryLen)) {
+      freeStorage(&appList);
       break;
     }
 
     if (queryChanged(query, altquery, queryLen)) {
       printQuery(query, queryLen);
-      search(query);
+      search(query, &appList, appAmount, path);
     }
 
     if (sizeChanged()) {
