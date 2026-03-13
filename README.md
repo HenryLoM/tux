@@ -8,3 +8,7 @@ A simple app launcher for Unix written in C
 ## features
 - own terminal screen handler (no ncurses)
 - collecting apps from `PATH` var
+
+## todos
+ - [ ] write to app.dat only when new entries in application path
+
