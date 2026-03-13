@@ -1,4 +1,4 @@
-// main.c
+// tux - main.c
 //    basic c app launcher with fzf
 
 // usefull info

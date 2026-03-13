@@ -1,4 +1,4 @@
-# TUI-Launcher
+# tux - TUI-Launcher
 A simple app launcher for Unix written in C
 
 >[!CAUTION]

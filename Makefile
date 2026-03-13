@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -Wpedantic -Wshadow -Wconversion
 DEBUGFLAGS = -g -O0 -fsanitize=address,undefined
 RELEASEFLAGS = -O2
 
-TARGET = tui-launcher
+TARGET = tux
 SRC = main.c
 
 debug: $(SRC)
