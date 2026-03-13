@@ -44,8 +44,14 @@ volatile sig_atomic_t resized = 0;
 struct applist {
   char **nameList;
   char *nameSrc;
+
+  char **nameLowerList;
+  char *nameLowerSrc;
+
   char **execCmdList;
   char *execSrc;
+
+  int *nameLenList;
 };
 typedef struct applist *AppList;
 
@@ -144,18 +150,18 @@ int readKey() {
   return c;
 }
 
-int isSubsequence(const char *q, const char *s) {
+int isSubsequenceLower(const char *q, const char *s) {
   while (*q && *s) {
-    if (tolower((unsigned char)*q) == tolower((unsigned char)*s))
+    if (*q == *s)
       q++;
     s++;
   }
   return *q == '\0';
 }
 
-int startsWith(const char *s, const char *prefix) {
+int startsWithLower(const char *s, const char *prefix) {
   while (*prefix && *s) {
-    if (tolower((unsigned char)*s) != tolower((unsigned char)*prefix))
+    if (*s != *prefix)
       return 0;
     s++;
     prefix++;
@@ -163,15 +169,14 @@ int startsWith(const char *s, const char *prefix) {
   return *prefix == '\0';
 }
 
-int contains(const char *s, const char *p) {
+int containsLower(const char *s, const char *p) {
   size_t plen = strlen(p);
   if (plen == 0)
     return 1;
 
   for (size_t i = 0; s[i]; i++) {
     size_t j = 0;
-    while (s[i + j] && p[j] &&
-           tolower((unsigned char)s[i + j]) == tolower((unsigned char)p[j]))
+    while (s[i + j] && p[j] && s[i + j] == p[j])
       j++;
     if (j == plen)
       return 1;
@@ -179,19 +184,23 @@ int contains(const char *s, const char *p) {
   return 0;
 }
 
-int fuzzyScore(const char *query, const char *name, int queryLen) {
+int fuzzyScore(const char *queryLower, const char *nameLower, int queryLen,
+               int nameLen) {
   int score = 0;
 
-  if (strcasecmp(query, name) == 0)
+  if (queryLen == 0)
+    return 1;
+
+  if (strcmp(queryLower, nameLower) == 0)
     score += 1000;
-  else if (startsWith(name, query))
+  else if (startsWithLower(nameLower, queryLower))
     score += 300;
-  else if (contains(name, query))
+  else if (containsLower(nameLower, queryLower))
     score += 180;
-  else if (isSubsequence(query, name))
+  else if (isSubsequenceLower(queryLower, nameLower))
     score += 100;
 
-  int len_diff = (int)strlen(name) - queryLen;
+  int len_diff = nameLen - queryLen;
   if (len_diff < 0)
     len_diff = -len_diff;
   score -= len_diff;
@@ -207,6 +216,13 @@ long getFileSize(char *dirPath, char *appName) {
     return st.st_size;
   }
   return 0;
+}
+
+void toLowerCopy(char *dst, const char *src) {
+  while (*src) {
+    *dst++ = (char)tolower((unsigned char)*src++);
+  }
+  *dst = '\0';
 }
 
 /*
@@ -368,7 +384,6 @@ int writeAppDataFile(char *dataPath) {
 }
 
 void writeAppList(char *dataPath, AppList appList, int *appAmount) {
-
   FILE *appFile = openDataFile(dataPath, "app.dat", "r");
   long appFileSize = getFileSize(dataPath, "app.dat");
   FILE *execFile = openDataFile(dataPath, "exec.dat", "r");
@@ -379,36 +394,68 @@ void writeAppList(char *dataPath, AppList appList, int *appAmount) {
   char *execLine = NULL;
   size_t execSize = 0;
 
-  char *names = malloc(sizeof(char) * (size_t)(appFileSize + 1));
+  char *names = malloc((size_t)appFileSize + 1);
+  char *namesLower = malloc((size_t)appFileSize + 1);
   char **nameList = malloc(sizeof(char *) * (size_t)*appAmount);
-  char *execs = malloc(sizeof(char) * (size_t)(execFileSize + 1));
+  char **nameLowerList = malloc(sizeof(char *) * (size_t)*appAmount);
+  int *nameLenList = malloc(sizeof(int) * (size_t)*appAmount);
+
+  char *execs = malloc((size_t)execFileSize + 1);
   char **execList = malloc(sizeof(char *) * (size_t)*appAmount);
-  if (!nameList || !execList)
+
+  if (!names || !namesLower || !nameList || !nameLowerList || !nameLenList ||
+      !execs || !execList) {
     return;
+  }
 
   appList->nameList = nameList;
   appList->nameSrc = names;
+  appList->nameLowerList = nameLowerList;
+  appList->nameLowerSrc = namesLower;
+  appList->nameLenList = nameLenList;
   appList->execCmdList = execList;
   appList->execSrc = execs;
 
   char *a = names;
+  char *al = namesLower;
   char *e = execs;
 
-  for (int i = 0; getline(&appLine, &appSize, appFile) != -1 &&
-                  getline(&execLine, &execSize, execFile) != -1;
+  for (int i = 0;
+       i < *appAmount && getline(&appLine, &appSize, appFile) != -1 &&
+       getline(&execLine, &execSize, execFile) != -1;
        i++) {
+    appLine[strcspn(appLine, "\n")] = '\0';
+    execLine[strcspn(execLine, "\n")] = '\0';
+
     nameList[i] = a;
+    strcpy(a, appLine);
+    nameLenList[i] = (int)strlen(a);
+    a += nameLenList[i] + 1;
+
+    nameLowerList[i] = al;
+    toLowerCopy(al, appLine);
+    al += strlen(al) + 1;
+
     execList[i] = e;
-    a += sprintf(a, "%s", appLine);
-    *(a - 1) = '\0';
-    e += sprintf(e, "%s", execLine);
-    *(e - 1) = '\0';
+    strcpy(e, execLine);
+    e += strlen(e) + 1;
   }
+
+  free(appLine);
+  free(execLine);
+  fclose(appFile);
+  fclose(execFile);
 }
 
 void freeStorage(AppList appList) {
   free(appList->nameList);
   free(appList->nameSrc);
+
+  free(appList->nameLowerList);
+  free(appList->nameLowerSrc);
+
+  free(appList->nameLenList);
+
   free(appList->execCmdList);
   free(appList->execSrc);
 }
@@ -419,19 +466,34 @@ Match *search(Match *top, char *query, AppList appList, int appAmount,
   if (!top)
     return 0;
 
-  int queryLen = (int)strlen(query);
-
-  for (int i = 0; i < appAmount; i++) {
+  for (int i = 0; i < *top_n; i++) {
     top[i].name = NULL;
     top[i].exec = NULL;
     top[i].score = 0;
-    int score = fuzzyScore(query, *(appList->nameList + i), queryLen);
-    tryInsertTop(top, *top_n, *(appList->nameList + i),
-                 *(appList->execCmdList + i), score);
+  }
+
+  if (query[0] == '\0') {
+    for (int i = 0; i < *top_n; i++) {
+      top[i].name = appList->nameList[i];
+      top[i].exec = appList->execCmdList[i];
+      top[i].score = 1;
+    }
+    return top;
+  }
+
+  char queryLower[512];
+  toLowerCopy(queryLower, query);
+  int queryLen = (int)strlen(queryLower);
+
+  for (int i = 0; i < appAmount; i++) {
+    int score = fuzzyScore(queryLower, appList->nameLowerList[i], queryLen,
+                           appList->nameLenList[i]);
+
+    tryInsertTop(top, *top_n, appList->nameList[i], appList->execCmdList[i],
+                 score);
   }
 
   sortTop(top, *top_n);
-
   return top;
 }
 
