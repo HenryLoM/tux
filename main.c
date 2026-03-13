@@ -86,15 +86,6 @@ void actRaw() {
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-void uiPrint(char *str, ...) {
-  ui_change = 1;
-
-  va_list ap;
-  va_start(ap, str);
-  vprintf(str, ap);
-  va_end(ap);
-}
-
 // get window size
 int getTermSize(int *rows, int *cols) {
   struct winsize ws;
@@ -113,12 +104,6 @@ int readKey() {
   return c;
 }
 
-/*
- *
- * ui components
- *
- */
-
 int sizeChanged() {
   int cols, rows;
   if (!getTermSize(&rows, &cols))
@@ -129,6 +114,74 @@ int sizeChanged() {
   termRows = rows;
   return 1;
 }
+
+int isSubsequence(const char *q, const char *s) {
+  while (*q && *s) {
+    if (tolower((unsigned char)*q) == tolower((unsigned char)*s))
+      q++;
+    s++;
+  }
+  return *q == '\0';
+}
+
+int startsWith(const char *s, const char *prefix) {
+  while (*prefix && *s) {
+    if (tolower((unsigned char)*s) != tolower((unsigned char)*prefix))
+      return 0;
+    s++;
+    prefix++;
+  }
+  return *prefix == '\0';
+}
+
+int contains(const char *s, const char *p) {
+  size_t plen = strlen(p);
+  if (plen == 0)
+    return 1;
+
+  for (size_t i = 0; s[i]; i++) {
+    size_t j = 0;
+    while (s[i + j] && p[j] &&
+           tolower((unsigned char)s[i + j]) == tolower((unsigned char)p[j]))
+      j++;
+    if (j == plen)
+      return 1;
+  }
+  return 0;
+}
+
+int fuzzyScore(const char *query, const char *name, const char *path) {
+  int score = 0;
+
+  if (strcasecmp(query, name) == 0)
+    score += 1000;
+  else if (startsWith(name, query))
+    score += 300;
+  else if (contains(name, query))
+    score += 180;
+  else if (isSubsequence(query, name))
+    score += 100;
+
+  if (startsWith(path, query))
+    score += 40;
+  else if (contains(path, query))
+    score += 20;
+  else if (isSubsequence(query, path))
+    score += 10;
+
+  int len_diff = (int)strlen(name) - (int)strlen(query);
+  if (len_diff < 0)
+    len_diff = -len_diff;
+  score -= len_diff;
+
+  return score;
+}
+
+/*
+ *
+ * ui components
+ *
+ */
 
 void clearResUi() {
   for (int i = termRows - 3; i > 0; i--)
@@ -149,6 +202,8 @@ void basicFrame() {
   clearResUi();
   ui_change = 1;
 }
+
+void fuzzySearch(char *query, char *apps) {}
 
 int getGUIApps(char *d, char *n, char *appName, char *execCmd) {
   char path[512]; // string to store the path of .desktop file
@@ -220,7 +275,7 @@ void writeAppDataFile(char *dataPath) {
   fclose(file);
 }
 
-void search() {}
+void search(char *query) {}
 
 void onStartUp() {
   actRaw();
@@ -272,23 +327,27 @@ int keyProcessing(int key, char query[], int *queryLen) {
   return 1;
 }
 
-void printQuery(char *query, char *altquery, int queryLen) {
+int queryChanged(char *query, char *altquery, int queryLen) {
   if (strcmp(query, altquery) != 0) {
     strcpy(altquery, query);
-    if (query[0] == 0) {
-      printf("\x1b[%d;%dH\x1b[2K│ search...", termRows - 1, 1);
-    } else {
-
-      printf("\x1b[%d;%dH\x1b[2K│ %.*s", termRows - 1, 1, termCols - 4,
-             queryLen > termCols - 5 ? query + queryLen - termCols + 4 : query);
-    }
-    printf("\x1b[%d;%dH│", termRows - 1, termCols);
-    printf("\x1b[%d;%dH", termRows - 1,
-           queryLen > termCols - 4 ? termCols - 1 : queryLen + 3);
-
-    ui_change = 1;
-    search();
+    return 1;
   }
+  return 0;
+}
+
+void printQuery(char *query, int queryLen) {
+  if (query[0] == 0) {
+    printf("\x1b[%d;%dH\x1b[2K│ search...", termRows - 1, 1);
+  } else {
+
+    printf("\x1b[%d;%dH\x1b[2K│ %.*s", termRows - 1, 1, termCols - 4,
+           queryLen > termCols - 5 ? query + queryLen - termCols + 4 : query);
+  }
+  printf("\x1b[%d;%dH│", termRows - 1, termCols);
+  printf("\x1b[%d;%dH", termRows - 1,
+         queryLen > termCols - 4 ? termCols - 1 : queryLen + 3);
+
+  ui_change = 1;
 }
 
 void app() {
@@ -305,10 +364,14 @@ void app() {
       break;
     }
 
-    printQuery(query, altquery, queryLen);
+    if (queryChanged(query, altquery, queryLen)) {
+      printQuery(query, queryLen);
+      search(query);
+    }
 
     if (sizeChanged()) {
       basicFrame();
+      printQuery(query, queryLen);
     }
 
     if (ui_change) {
