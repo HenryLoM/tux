@@ -123,15 +123,25 @@ int getTermSize(int *rows, int *cols) {
 int readKey() {
   char c;
 
-  if (read(0, &c, 1) != 1)
+  if (read(STDIN_FILENO, &c, 1) != 1)
     return -1;
 
   if (c == '\x1b') {
-    char seq[2];
+    struct pollfd pfd = {.fd = STDIN_FILENO, .events = POLLIN};
 
-    if (read(0, &seq[0], 1) != 1)
+    int r = poll(&pfd, 1, 25);
+    if (r <= 0)
       return '\x1b';
-    if (read(0, &seq[1], 1) != 1)
+
+    char seq[2];
+    if (read(STDIN_FILENO, &seq[0], 1) != 1)
+      return '\x1b';
+
+    r = poll(&pfd, 1, 25);
+    if (r <= 0)
+      return '\x1b';
+
+    if (read(STDIN_FILENO, &seq[1], 1) != 1)
       return '\x1b';
 
     if (seq[0] == '[') {
@@ -213,16 +223,6 @@ int fuzzyScore(const char *queryLower, const char *nameLower, int queryLen,
   score -= len_diff;
 
   return score;
-}
-
-long getFileSize(char *dirPath, char *appName) {
-  char path[512]; // string to store the path of .desktop file
-  snprintf(path, sizeof(path), "%s/%s", dirPath, appName);
-  struct stat st;
-  if (stat(path, &st) == 0) {
-    return st.st_size;
-  }
-  return 0;
 }
 
 void toLowerCopy(char *dst, const char *src) {
@@ -445,6 +445,48 @@ int split4(char *line, char **p, char **t, char **n, char **e) {
   return 1;
 }
 
+long getDirMTime(const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0)
+    return 0;
+  return (long)st.st_mtime;
+}
+
+int writeMetaFile(const char *metaPath, long dirMTime) {
+  FILE *f = fopen(metaPath, "w");
+  if (!f)
+    return 0;
+
+  fprintf(f, "%ld\n", dirMTime);
+  fclose(f);
+  return 1;
+}
+
+long readMetaFile(const char *metaPath) {
+  FILE *f = fopen(metaPath, "r");
+  if (!f)
+    return -1;
+
+  long mtime = -1;
+  if (fscanf(f, "%ld", &mtime) != 1)
+    mtime = -1;
+
+  fclose(f);
+  return mtime;
+}
+
+int validateCache(AppList a) {
+  for (int i = 0; i < a->count; i++) {
+    struct stat st;
+    if (stat(a->pathList[i], &st) != 0)
+      return 0;
+
+    if ((long)st.st_mtime != a->mtimeList[i])
+      return 0;
+  }
+  return 1;
+}
+
 int loadCache(const char *cachePath, AppList a) {
 
   long fileSize = 0;
@@ -647,26 +689,48 @@ void onStartUp(int *appAmount, AppList appList) {
   actAltScr();
 
   char *homePath = getenv("HOME");
-  char dataDir[502];
+  char dataDir[500];
   char cachePath[512];
+  char metaPath[512];
 
   snprintf(dataDir, sizeof(dataDir), "%s/.local/share/tux-launcher", homePath);
   mkdir(dataDir, 0755);
 
   snprintf(cachePath, sizeof(cachePath), "%s/cache.dat", dataDir);
+  snprintf(metaPath, sizeof(metaPath), "%s/cache.meta", dataDir);
 
   getTermSize(&termRows, &termCols);
   basicFrame();
 
   int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-  fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+  fcntl(STDIN_FILENO, F_SETFL, flags);
 
-  if (!loadCache(cachePath, appList)) {
+  const char *appsDir = "/usr/share/applications/";
+  long currentDirMTime = getDirMTime(appsDir);
+  long cachedDirMTime = readMetaFile(metaPath);
+
+  if (cachedDirMTime == currentDirMTime) {
+    int loaded = loadCache(cachePath, appList);
+
+    if (!loaded || !validateCache(appList)) {
+      if (loaded) {
+        freeStorage(appList);
+        memset(appList, 0, sizeof(*appList));
+      }
+
+      writeAppDataFile(cachePath);
+      writeMetaFile(metaPath, currentDirMTime);
+
+      if (!loadCache(cachePath, appList))
+        exit(1);
+    }
+  } else {
     writeAppDataFile(cachePath);
+    writeMetaFile(metaPath, currentDirMTime);
+
     if (!loadCache(cachePath, appList))
       exit(1);
   }
-
   *appAmount = appList->count;
 
   struct sigaction sa = {0};
