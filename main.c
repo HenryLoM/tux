@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -666,22 +667,35 @@ void launchApp(Match *top, int selected) {
     return;
 
   if (pid == 0) {
-    deactAltScr();
-    deactRaw();
+    signal(SIGHUP, SIG_IGN);
 
     if (setsid() < 0)
       _exit(127);
 
-    int devnull = open("/dev/null", O_WRONLY);
-    dup2(devnull, STDIN_FILENO);
-    dup2(devnull, STDOUT_FILENO);
-    dup2(devnull, STDERR_FILENO);
+    pid_t pid2 = fork();
+    if (pid2 < 0)
+      _exit(127);
+    if (pid2 > 0)
+      _exit(0);
+
+    int devnull = open("/dev/null", O_RDWR);
+    if (devnull < 0)
+      _exit(127);
+
+    if (dup2(devnull, STDIN_FILENO) < 0)
+      _exit(127);
+    if (dup2(devnull, STDOUT_FILENO) < 0)
+      _exit(127);
+    if (dup2(devnull, STDERR_FILENO) < 0)
+      _exit(127);
     if (devnull > 2)
       close(devnull);
 
     execl("/bin/sh", "sh", "-c", top[selected].exec, NULL);
     _exit(127);
   }
+
+  waitpid(pid, NULL, 0);
 }
 
 void onStartUp(int *appAmount, AppList appList) {
@@ -769,7 +783,6 @@ int keyProcessing(int key, char query[], int *queryLen, int *selected,
   } else if (key == '\r' || key == '\n') {
     launchApp(top, *selected);
     return 0;
-    system(top[0].exec);
   } else if (key >= KEY_UP && key <= KEY_RIGHT) {
     handleArrowKeyEvents(top, key, selected);
     highlightSelected(*selected, top);
