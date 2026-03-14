@@ -770,9 +770,9 @@ void onStartUp(int *appAmount, AppList appList) {
   sigaction(SIGWINCH, &sa, NULL);
 }
 
-void handleArrowKeyEvents(Match *top, int key, int *selected) {
+void handleArrowKeyEvents(int key, int *selected, int top_n) {
   if (key == KEY_UP) {
-    *selected = top[*selected + 1].score == 0 ? *selected : *selected + 1;
+    *selected = *selected + 1 < top_n ? *selected + 1 : *selected;
   } else if (key == KEY_DOWN) {
     *selected = *selected > 0 ? *selected - 1 : *selected;
   }
@@ -787,7 +787,7 @@ void highlightSelected(int selected, Match *top) {
 }
 
 int keyProcessing(int key, char query[], int *queryLen, int *selected,
-                  Match *top) {
+                  Match *top, int top_n) {
   if (key == 27) { // ESC
     if (*queryLen > 0) {
       for (; *queryLen >= 0; (*queryLen)--)
@@ -802,7 +802,7 @@ int keyProcessing(int key, char query[], int *queryLen, int *selected,
     launchApp(top, *selected);
     return 0;
   } else if (key >= KEY_UP && key <= KEY_RIGHT) {
-    handleArrowKeyEvents(top, key, selected);
+    handleArrowKeyEvents(key, selected, top_n);
     highlightSelected(*selected, top);
   } else if (isprint(key)) {
     if (*queryLen < 512) {
@@ -901,7 +901,7 @@ void app(void) {
 
     if (ev == 1) {
       int key = readKey(); // darf jetzt blockierend / halbblockierend sein
-      if (!keyProcessing(key, query, &queryLen, &selected, top)) {
+      if (!keyProcessing(key, query, &queryLen, &selected, top, top_n)) {
         break;
       }
 
